@@ -1,0 +1,159 @@
+---
+title: "Final Project"
+author: "Charlie Zhan_MSQF"
+date: "4/29/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Finance Project: Pricing performance of factors
+```{r}
+rm(list = ls())
+library(cbw)
+```
+1. Select 10 stocks that you are interested in. Find their yahoo symbols. This website can help you find the symbols that yahoo is using http://investexcel.net/all-yahoo-financestock-tickers/. Remember to double check the symbols at yahoo finance.
+
+```{r}
+symbols=c('AAPL','BAC','AMZN','T','GOOG','IBM','F','UBS','ACN','EA')
+symnames=c('apple','boa','amazon','att','google','ibm','ford','ubs','accenture','ea')
+```
+
+2. Download monthly premium data for each stock from Jan 2005 to Dec 2018 using the
+cbw getfinmdat() function. Remember this requires that all 10 stocks you select in step 1 should be available for this time frame.
+
+```{r}
+prmdf = getfinmdat(symbols=symbols,symnames=symnames,
+                   from ="2004-12-31",
+                   to = "2018-12-31")
+head(prmdf)
+```
+
+3. Load the package czzg and use the data(factor12) as given to find the best factor
+collection by the Chib, Zeng and Zhao (2020) method. Use a student-t distribution for the errors and let nu = 5 in the model scan.
+
+```{r}
+library(czzg)
+plan(multisession)
+data("factor12")
+datdf = factor12
+scanls  = CZZtscan(data = datdf,nu = 5)
+scandf = scanls$scandf
+scandford = scandf[order(scandf$logmarg,decreasing = T),]
+Mst = which.max(scandf$logmarg);
+scandf[Mst,];
+# the best model is Mkt + SMB + ROE + PEAD + MGMT
+```
+
+4. Combine the data in factor12 with the data on the 10 stock premiums (this means that at this point you will remove all the rows in factor12 before January 2005).
+
+```{r}
+datdfn = datdf[373:540,]
+prmdfn = prmdf[,1:10]
+prmfactordf = cbind(datdfn,prmdfn)
+```
+
+5. Use the factors from the best model to see how many of the 10 stocks can be priced (for each stock you need to fit two models - one with an intercept and one without, as described in the which factors note).
+
+```{r}
+xnames = c("Mkt","SMB","ROE","PEAD","MGMT")
+ynames = names(prmdfn)
+czzfrm = "~Mkt + SMB + ROE + PEAD + MGMT"
+J = length(ynames)
+marglik1 = rep(0,J)
+marglik0 = rep(0,J)
+for (j in 1:J) {
+  ynamesj = ynames[j]
+  frmj = as.formula(paste(ynamesj,czzfrm,sep = ""))
+  frmj0 = as.formula(paste(ynamesj,czzfrm,"-1",sep = ""))
+  theta1m = MCMCregresst(modelfrm = frmj,
+                         data = prmfactordf,
+                         nu=5);
+  theta0m = MCMCregresst(modelfrm = frmj0,
+                         data = prmfactordf,
+                         nu=5);
+  marglik1[j] = logmarglik(theta1m);
+  marglik0[j] = logmarglik(theta0m);
+}
+diff = marglik1 - marglik0; 
+ynames[diff > 1.15]
+#9 of the 10 stocks can be priced, except Apple
+```
+
+## Marketing Project: Brand complements and substitutes
+
+```{r}
+data("tuna")
+dftuna=tuna
+```
+
+1. Load the tuna data set. There are seven brands in the data set. For each brand,
+estimate separate independent student-t models where logsales for each product is
+regressed on an intercept, the product’s log price and display activity. Use the default training sample prior and use log-marginal likelihoods to find the appropriate-degrees of freedom of the student-t distribution on the grid seq(from = 3,to = 6,length.out = 11).
+
+```{r}
+nug = seq(from = 3,to = 6,length.out = 11)
+J = 7
+xnames = c( "~ LPRICE", "+ NSALE")
+ynames = "MOVE"
+marglik = rep(0,J)
+for (j in 1:J) {
+  ynamesj = paste(ynames,j,sep = "")
+  xnamesj= paste(xnames,j,sep = "",collapse = "")
+  modelj = as.formula(paste(ynamesj,xnamesj,sep = ""))
+  outlsj= mapply("MCMCregresst",
+                  nu = nug,
+                  MoreArgs = list(modelfrm = modelj, data = dftuna),
+                  SIMPLIFY = FALSE)
+  marglikj = logmarglik(outlsj);
+  marglik[j]= marglikj
+  A = cbind(nug,t(marglikj))
+  indj = which.max(A[,2]); # which model has the largest marg lik
+  colnames(A) = c("nu","logmarg")
+  rnames = paste("brand",j,sep = "",collapse = "")
+  rnames = rep(rnames,times = length(nug))
+  rownames(A) = rnames
+  print(A[indj,,drop = F])
+}
+```
+
+2. Now estimate a SURE student-t model for the seven brands. Again use marginal
+likelihoods to find the appropriate degrees of freedom on the grid seq(from = 3,to =6,length.out = 11).
+
+```{r}
+suremodels=list()
+for (j in 1:J) {
+  ynamesj = paste(ynames,j,sep = "")
+  xnamesj= paste(xnames,j,sep = "",collapse = "")
+  suremodels[[j]] = as.formula(paste(ynamesj,xnamesj,sep = ""))
+}
+sureoutls= mapply("MCMCsuret",
+                nu = nug,
+                MoreArgs = list(modelfrm = suremodels, data = dftuna),
+                SIMPLIFY = FALSE)
+suremarglik = logmarglik(sureoutls);
+B = cbind(nug,t(suremarglik))
+colnames(B) = c("nu","logmarg")
+sureind = which.max(B[,2]); # which model has the largest marg lik
+surethetatm = sureoutls[[sureind]]
+print(B[sureind,,drop = F])
+```
+3. Do you find that the SURE-t model is an improvement over the independent t-models?
+
+```{r}
+sum(marglik)
+logmarglik(surethetatm)
+#Yes, because SURE-t model has greater marginal likelihood
+```
+
+4. From the best fitting SURE-t model, what brands appear to be complements and which appear to be substitutes?
+
+```{r}
+summarycorr(surethetatm)
+#complements have positive correlation coefficient, while substitutes have negative correlation coefficient
+#brand 3 and brand 6 have a correlation of 0.48, so this two appear to be complements.
+#brand 6 and brand 7 have a correlation of -0.15, so this two appear to be complements.
+
+```
